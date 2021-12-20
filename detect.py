@@ -34,11 +34,90 @@ from utils.general import (LOGGER, check_file, check_img_size, check_imshow, che
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
 
+from contextlib import contextmanager
+from io import StringIO
+from streamlit.report_thread import REPORT_CONTEXT_ATTR_NAME
+from threading import current_thread
+import streamlit as st
+import pandas as pd
+import time
+# from detect import detect
+
+import os
+import sys
+import argparse
+from PIL import Image
+import PIL
+import base64
+
+st.set_page_config(
+    page_title="Hassan Baydoun - Final Project Python",
+)
+
+@contextmanager
+def st_redirect(src, dst):
+    '''
+        Redirects the print of a function to the streamlit UI.
+    '''
+    placeholder = st.empty()
+    output_func = getattr(placeholder, dst)
+
+    with StringIO() as buffer:
+        old_write = src.write
+
+        def new_write(b):
+            if getattr(current_thread(), REPORT_CONTEXT_ATTR_NAME, None):
+                buffer.write(b)
+                output_func(buffer.getvalue())
+            else:
+                old_write(b)
+
+        try:
+            src.write = new_write
+            yield
+        finally:
+            src.write = old_write
+
+
+@contextmanager
+def st_stdout(dst):
+    '''
+        Sub-implementation to redirect for code redability.
+    '''
+    with st_redirect(sys.stdout, dst):
+        yield
+
+
+@contextmanager
+def st_stderr(dst):
+    '''
+        Sub-implementation to redirect for code redability in case of errors.
+    '''
+    with st_redirect(sys.stderr, dst):
+        yield
+
+def _all_subdirs_of(b='.'):
+    '''
+        Returns all sub-directories in a specific Path
+    '''
+    result = []
+    for d in os.listdir(b):
+        bd = os.path.join(b, d)
+        if os.path.isdir(bd): result.append(bd)
+    return result
+
+def _get_latest_folder():
+    '''
+        Returns the latest folder in a runs\detect
+    '''
+    return max(_all_subdirs_of(os.path.join('runs', 'detect')), key=os.path.getmtime)
+
+
 
 @torch.no_grad()
 def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         source=ROOT / 'data/images',  # file/dir/URL/glob, 0 for webcam
-        imgsz=(640, 640),  # inference size (height, width)
+        imgsz=640,  # inference size (pixels)
         conf_thres=0.25,  # confidence threshold
         iou_thres=0.45,  # NMS IOU threshold
         max_det=1000,  # maximum detections per image
@@ -202,7 +281,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5s.pt', help='model path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolo_best.pt', help='model path(s)')
     parser.add_argument('--source', type=str, default=ROOT / 'data/images', help='file/dir/URL/glob, 0 for webcam')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
@@ -233,11 +312,61 @@ def parse_opt():
     return opt
 
 
-def main(opt):
-    check_requirements(exclude=('tensorboard', 'thop'))
-    run(**vars(opt))
+# def main(opt):
+#     check_requirements(exclude=('tensorboard', 'thop'))
+#     run(**vars(opt))
+#
+#
+# if __name__ == "__main__":
+#     opt = parse_opt()
+#     main(opt)
 
 
-if __name__ == "__main__":
-    opt = parse_opt()
-    main(opt)
+opt = parse_opt()
+check_requirements(exclude=('tensorboard', 'thop'))
+
+
+def _save_uploadedfile(uploadedfile):
+    '''
+        Saves uploaded videos to disk.
+    '''
+    with open(os.path.join("data", "videos",uploadedfile.name),"wb") as f:
+        f.write(uploadedfile.getbuffer())
+
+
+def _format_func(option):
+    '''
+        Format function for select Key/Value implementation.
+    '''
+    return CHOICES[option]
+
+
+
+
+uploaded_file = st.sidebar.file_uploader("Upload Image", type=['png','jpeg', 'jpg'])
+if uploaded_file is not None:
+    is_valid = True
+    with st.spinner(text='In progress'):
+        st.sidebar.image(uploaded_file)
+        picture = Image.open(uploaded_file)
+        picture = picture.save(f'data/images/{uploaded_file.name}')
+        opt.source = f'data/images/{uploaded_file.name}'
+else:
+    is_valid = False
+
+
+st.title('Mathematical Formula Detector!')
+st.subheader('Supervised by Eng. Hazem Mamdouh')
+
+inferenceButton = st.empty()
+
+if is_valid:
+    if inferenceButton.button('Launch the Detection!'):
+        with st_stdout("info"):
+            run(**vars(opt))
+
+
+        with st.spinner(text='Preparing Images'):
+            for img in os.listdir(_get_latest_folder()):
+                st.image(f'{_get_latest_folder()}/{img}')
+            st.balloons()
